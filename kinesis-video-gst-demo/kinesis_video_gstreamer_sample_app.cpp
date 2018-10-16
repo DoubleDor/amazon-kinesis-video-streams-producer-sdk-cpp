@@ -51,6 +51,8 @@ LOGGER_TAG("com.amazonaws.kinesis.video.gstreamer");
 
 namespace com { namespace amazonaws { namespace kinesis { namespace video {
 
+unsigned int start_time = 0;
+
 class SampleClientCallbackProvider : public ClientCallbackProvider {
 public:
 
@@ -123,7 +125,7 @@ public:
     device_info_t getDeviceInfo() override {
         auto device_info = DefaultDeviceInfoProvider::getDeviceInfo();
         // Set the storage size to 256mb
-        device_info.storageInfo.storageSize = 512 * 1024 * 1024;
+        device_info.storageInfo.storageSize = 64 * 1024 * 1024;
         return device_info;
     }
 };
@@ -177,8 +179,11 @@ typedef struct _CustomData {
 void create_kinesis_video_frame(Frame *frame, const nanoseconds &pts, const nanoseconds &dts, FRAME_FLAGS flags,
                                 void *data, size_t len) {
     frame->flags = flags;
-    frame->decodingTs = static_cast<UINT64>(dts.count()) / DEFAULT_TIME_UNIT_IN_NANOS;
-    frame->presentationTs = static_cast<UINT64>(pts.count()) / DEFAULT_TIME_UNIT_IN_NANOS;
+// std::chrono::nanoseconds now = std::chrono::time_point_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now());
+    frame->presentationTs = frame->decodingTs = static_cast<UINT64>(std::chrono::system_clock::now().time_since_epoch().count()) / DEFAULT_TIME_UNIT_IN_NANOS;
+//  frame->decodingTs = static_cast<UINT64>(dts.count()) / DEFAULT_TIME_UNIT_IN_NANOS;
+//  frame->presentationTs = static_cast<UINT64>(std::chrono::system_clock::now().time_since_epoch().count()) / DEFAULT_TIME_UNIT_IN_NANOS;
+//  frame->presentationTs = static_cast<UINT64>(pts.count()) / DEFAULT_TIME_UNIT_IN_NANOS;
     frame->duration = 10 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
     frame->size = static_cast<UINT32>(len);
     frame->frameData = reinterpret_cast<PBYTE>(data);
@@ -204,34 +209,36 @@ static GstFlowReturn on_new_sample(GstElement *sink, CustomData *data) {
 
     GstBuffer *buffer = gst_sample_get_buffer(sample);
     bool isDroppable =  GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_CORRUPTED) ||
-                        GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DECODE_ONLY);
+                        GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DECODE_ONLY) ||
+                        GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_HEADER) ||
+                        (!GST_BUFFER_PTS_IS_VALID(buffer) && !GST_BUFFER_DTS_IS_VALID(buffer));
     if (!isDroppable) {
-        bool isHeader = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_HEADER);
-        // drop if buffer contains header only and has invalid timestamp
-        if (!(isHeader && (!GST_BUFFER_PTS_IS_VALID(buffer) || !GST_BUFFER_DTS_IS_VALID(buffer)))) {
-            size_t buffer_size = gst_buffer_get_size(buffer);
-            uint8_t *frame_data = new uint8_t[buffer_size];
-            gst_buffer_extract(buffer, 0, frame_data, buffer_size);
 
-            bool delta = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
-            FRAME_FLAGS kinesis_video_flags;
-            if(!delta) {
-                // Safeguard stream and playback in case of h264 keyframes comes with different PTS and DTS
-                if (data->h264_stream_supported) {
-                    buffer->pts = buffer->dts;
-                }
-                kinesis_video_flags = FRAME_FLAG_KEY_FRAME;
-            } else {
-                kinesis_video_flags = FRAME_FLAG_NONE;
-            }
+        size_t buffer_size = gst_buffer_get_size(buffer);
+        uint8_t *frame_data = new uint8_t[buffer_size];
+        gst_buffer_extract(buffer, 0, frame_data, buffer_size);
 
-            if (false == put_frame(data->kinesis_video_stream, frame_data, buffer_size, std::chrono::nanoseconds(buffer->pts),
-                                   std::chrono::nanoseconds(buffer->dts), kinesis_video_flags)) {
-                g_printerr("Dropped frame!\n");
-            }
-
-            delete[] frame_data;
+        // guarantee dts is always available
+        if (!GST_BUFFER_DTS_IS_VALID(buffer)) {
+            buffer->dts = buffer->pts;
         }
+        buffer->pts = buffer->dts;
+
+        bool delta = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
+        FRAME_FLAGS kinesis_video_flags;
+        if(!delta) {
+            kinesis_video_flags = FRAME_FLAG_KEY_FRAME;
+        } else {
+            kinesis_video_flags = FRAME_FLAG_NONE;
+        }
+
+        if (false == put_frame(data->kinesis_video_stream, frame_data, buffer_size, std::chrono::nanoseconds(buffer->pts),
+                               std::chrono::nanoseconds(buffer->dts), kinesis_video_flags)) {
+            g_printerr("Dropped frame!\n");
+        }
+
+        delete[] frame_data;
+
     }
 
     gst_sample_unref(sample);
@@ -449,6 +456,9 @@ int gstreamer_init(int argc, char* argv[]) {
         g_printerr("Invalid resolution\n");
         return 1;
     }
+
+    GstClock* gstSystemClk = gst_system_clock_obtain();
+    g_object_set(gstSystemClk, "clock-type", GST_CLOCK_TYPE_REALTIME, NULL); 
 
     /* create the elemnents */
     /*

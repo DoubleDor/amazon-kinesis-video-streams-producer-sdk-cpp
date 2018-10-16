@@ -11,3 +11,14 @@ kinesis-video-native-build/start
 kinesis-video-native-build/test_h264_jpg.mkv
 kinesis-video-native-build/test_jpeg.mkv
 test-stream/
+
+kinesis-video-native-build/certs/
+kinesis-video-native-build/gstkvsplugintest
+kinesis-video-native-build/kinesis_video_gstreamer_sample_multistream_app
+kinesis-video-native-build/kinesis_video_gstreamer_sample_rtsp_app
+kinesis-video-native-build/kvs_producer_plugin_demo
+kinesis-video-native-build/kvs_producer_plugin_rtsp_demo
+kinesis-video-native-build/libgstkvssink.so
+kinesis-video-native-build/libproducer.so
+kinesis-video-native-build/log/
+kinesis-video-native-build/set_kvs_sdk_env.sh
