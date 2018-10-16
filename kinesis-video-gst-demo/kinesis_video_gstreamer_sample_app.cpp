@@ -179,11 +179,7 @@ typedef struct _CustomData {
 void create_kinesis_video_frame(Frame *frame, const nanoseconds &pts, const nanoseconds &dts, FRAME_FLAGS flags,
                                 void *data, size_t len) {
     frame->flags = flags;
-// std::chrono::nanoseconds now = std::chrono::time_point_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now());
     frame->presentationTs = frame->decodingTs = static_cast<UINT64>(std::chrono::system_clock::now().time_since_epoch().count()) / DEFAULT_TIME_UNIT_IN_NANOS;
-//  frame->decodingTs = static_cast<UINT64>(dts.count()) / DEFAULT_TIME_UNIT_IN_NANOS;
-//  frame->presentationTs = static_cast<UINT64>(std::chrono::system_clock::now().time_since_epoch().count()) / DEFAULT_TIME_UNIT_IN_NANOS;
-//  frame->presentationTs = static_cast<UINT64>(pts.count()) / DEFAULT_TIME_UNIT_IN_NANOS;
     frame->duration = 10 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
     frame->size = static_cast<UINT32>(len);
     frame->frameData = reinterpret_cast<PBYTE>(data);
